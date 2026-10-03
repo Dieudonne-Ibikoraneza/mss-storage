@@ -1,0 +1,61 @@
+name: magnificat-storage
+
+services:
+  minio:
+    image: ${MINIO_IMAGE:-magnificat-minio:local}
+    build:
+      context: .
+      target: minio
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-magnificat-storage}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in storage/.env}
+      MINIO_BROWSER_REDIRECT_URL: ${MINIO_BROWSER_REDIRECT_URL:-}
+    command: [server, /data, --console-address, ':9001']
+    ports:
+      - "127.0.0.1:${MINIO_API_PORT:-9002}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9003}:9001"
+    volumes:
+      - minio-data:/data
+    networks:
+      backend:
+        aliases: [magnificat-minio]
+    restart: unless-stopped
+    init: true
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, --max-time, '5', http://127.0.0.1:9000/minio/health/ready]
+      interval: 10s
+      timeout: 5s
+      start_period: 15s
+      retries: 5
+
+  init-bucket:
+    image: ${MINIO_MC_IMAGE:-magnificat-mc:local}
+    build:
+      context: .
+      target: mc
+    profiles: [tools]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-magnificat-storage}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in storage/.env}
+      MINIO_BUCKET: ${MINIO_BUCKET:-magnificat-smart-space}
+    networks: [backend]
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - |
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null
+        mc mb --ignore-existing "local/$$MINIO_BUCKET"
+        mc anonymous set none "local/$$MINIO_BUCKET"
+    security_opt: [no-new-privileges:true]
+
+volumes:
+  minio-data:
+    name: ${MINIO_VOLUME:-magnificat-storage_minio-data}
+
+networks:
+  backend:
+    external: true
+    name: ${BACKEND_NETWORK:-magnificat-backend}
